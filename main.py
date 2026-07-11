@@ -35,7 +35,7 @@ else:
     creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
 
 client = gspread.authorize(creds)
-SPREADSHEET_ID = "あなたのスプレッドシートID"  # ★ここにIDを貼り付け
+SPREADSHEET_ID = "1xT829FaaYVMcm3VnFwywoF021s2hTFkisq04uaS5xbA"  # ★ここにIDを貼り付け
 sheet = client.open_by_key(SPREADSHEET_ID)
 
 # ==========================================
