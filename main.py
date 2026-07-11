@@ -1,28 +1,46 @@
 import os
 import json
+import threading
+from datetime import datetime
+from flask import Flask
 import discord
 from discord.ext import commands
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# 修正：環境変数からJSON文字列を読み込んで認証する
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_json_string = os.getenv("GOOGLE_CREDENTIALS_JSON")
+# ==========================================
+# 1. Flask Webサーバーの設定 (Renderのエラー対策)
+# ==========================================
+app = Flask('')
 
-if creds_json_string:
-    creds_dict = json.loads(creds_json_string)
+@app.route('/')
+def home():
+    return "Discord Bot is running!"
+
+def run_flask():
+    # Renderは環境変数 PORT を指定してくるので、それを読み込んで起動します
+    port = int(os.getenv("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# ==========================================
+# 2. Google Sheets APIのセットアップ
+# ==========================================
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+json_creds = os.getenv("GOOGLE_CREDENTIALS_JSON")
+
+if json_creds:
+    creds_dict = json.loads(json_creds)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 else:
-    raise ValueError("環境変数 GOOGLE_CREDENTIALS_JSON が設定されていません。")
+    creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
 
 client = gspread.authorize(creds)
-# （以下、以前のコードと同じ）
-
-# 修正後：IDで直接開く
-SPREADSHEET_ID = "1xT829FaaYVMcm3VnFwywoF021s2hTFkisq04uaS5xbA"
+SPREADSHEET_ID = "あなたのスプレッドシートID"  # ★ここにIDを貼り付け
 sheet = client.open_by_key(SPREADSHEET_ID)
 
-# 2. Discord Botのセットアップ
+# ==========================================
+# 3. Discord Botのセットアップ
+# ==========================================
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -33,17 +51,12 @@ async def on_ready():
 
 @bot.command(name="log")
 async def save_log(ctx, *channels: discord.TextChannel):
-    """
-    使い方: !log #channel1 #channel2
-    指定されたチャンネルの過去ログを取得し、スプレッドシートに保存・更新します。
-    """
     if not channels:
         await ctx.send("チャンネルを1つ以上指定してください。(例: `!log #general`)")
         return
 
     await ctx.send("ログの取得およびスプレッドシートへの同期を開始します...")
 
-    # 「Logs」という名前のシートに全データを蓄積する構成の例
     try:
         worksheet = sheet.worksheet("AllLogs")
     except gspread.exceptions.WorksheetNotFound:
@@ -51,12 +64,9 @@ async def save_log(ctx, *channels: discord.TextChannel):
         worksheet.append_row(["ServerName", "ChannelName", "UserName", "Content", "Timestamp"])
 
     for channel in channels:
-        # 既存の同一チャンネルのログを上書き(更新)したいため、一度古いデータを消すか、
-        # ここではシンプルに最新100件を取得して追加するロジックにします
         async for message in channel.history(limit=100):
-            # 既に同じメッセージIDがあるかチェックする処理などを入れるとより確実です
             if message.author.bot:
-                continue # Botのメッセージは除外する場合
+                continue
                 
             formatted_time = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
             row = [
@@ -70,5 +80,13 @@ async def save_log(ctx, *channels: discord.TextChannel):
 
     await ctx.send("データの更新が完了しました！")
 
-# Renderの環境変数からトークンを読み込む
-bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+# ==========================================
+# 4. 同時起動の実行
+# ==========================================
+if __name__ == "__main__":
+    # Flaskを別スレッドでバックグラウンド起動
+    t = threading.Thread(target=run_flask)
+    t.start()
+    
+    # Discord Botをメインスレッドで起動
+    bot.run(os.getenv("DISCORD_BOT_TOKEN"))
