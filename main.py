@@ -84,7 +84,7 @@ async def log_unregister(interaction: discord.Interaction):
         await interaction.response.send_message(f"このチャンネルは登録されていません。", ephemeral=True)
 
 # ==========================================
-# 4. 1分ごとの自動見回りタスク (タスクループ)
+# 4. 1分ごとの自動見回りタスク (重複防止版)
 # ==========================================
 @tasks.loop(minutes=1.0)
 async def auto_log_loop():
@@ -99,18 +99,41 @@ async def auto_log_loop():
         worksheet = sheet.add_worksheet(title="AllLogs", rows="100", cols="5")
         worksheet.append_row(["ServerName", "ChannelName", "UserName", "Content", "Timestamp"])
 
+    # スプレッドシートの全データを一度に取得して、各チャンネルの「最後の時間」を調べる
+    all_rows = worksheet.get_all_values()
+    
     for channel_id in list(registered_channels):
         channel = bot.get_channel(channel_id)
         if not channel:
             continue
         
+        # スプレッドシートから、このチャンネルの最新のタイムスタンプ（最後の時間）を探す
+        last_timestamp = None
+        # 下から上に向かって検索（最新のものが下にあるため）
+        for row in reversed(all_rows):
+            if len(row) >= 5 and row[0] == channel.guild.name and row[1] == channel.name:
+                try:
+                    # 文字列をdatetimeオブジェクトに変換
+                    last_timestamp = datetime.strptime(row[4], "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    pass
+                break # 一番最初に見つかった（＝最新の）ログで終了
+
         try:
-            # 過去1分間の新着メッセージ（直近20件など）を安全に取得
-            async for message in channel.history(limit=20):
+            # 新しいログを一時的に貯めるリスト
+            new_rows = []
+            
+            # 過去のメッセージを取得（afterを指定すると、その時間以降のものだけを取得できる）
+            # discord.py の history(after=...) は古い順にメッセージが取得されます
+            async for message in channel.history(limit=50, after=last_timestamp):
                 if message.author.bot:
                     continue
                 
+                # discord.py の after は「その時間ぴったり」も含まれることがあるため、秒単位で完全一致はスキップ
                 formatted_time = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                if last_timestamp and formatted_time == last_timestamp.strftime("%Y-%m-%d %H:%M:%S"):
+                    continue
+                
                 row = [
                     channel.guild.name,
                     channel.name,
@@ -118,8 +141,13 @@ async def auto_log_loop():
                     message.content,
                     formatted_time
                 ]
-                # 重複を避ける簡易ロジック（完全に重複排除したい場合はメッセージID等のチェックが必要です）
-                worksheet.append_row(row)
+                new_rows.append(row)
+            
+            # 新しいログがあれば、まとめてスプレッドシートの末尾に追加
+            if new_rows:
+                worksheet.append_rows(new_rows)
+                print(f"  └ [#{channel.name}] {len(new_rows)}件の新着ログを追加しました。")
+                
         except Exception as e:
             print(f"チャンネル {channel_id} のログ取得中にエラー: {e}")
 
