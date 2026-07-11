@@ -18,9 +18,9 @@ else:
 client = gspread.authorize(creds)
 # （以下、以前のコードと同じ）
 
-# 事前に作成したスプレッドシートの名前、またはURL
-SPREADSHEET_NAME = "1xT829FaaYVMcm3VnFwywoF021s2hTFkisq04uaS5xbA"
-sheet = client.open(SPREADSHEET_NAME)
+# 修正後：IDで直接開く
+SPREADSHEET_ID = "1xT829FaaYVMcm3VnFwywoF021s2hTFkisq04uaS5xbA"
+sheet = client.open_by_key(SPREADSHEET_ID)
 
 # 2. Discord Botのセットアップ
 intents = discord.Intents.default()
