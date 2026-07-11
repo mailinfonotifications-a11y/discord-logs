@@ -84,7 +84,7 @@ async def log_unregister(interaction: discord.Interaction):
         await interaction.response.send_message(f"このチャンネルは登録されていません。", ephemeral=True)
 
 # ==========================================
-# 4. 1分ごとの自動見回りタスク (重複完全ブロック版)
+# 4. 1分ごとの自動見回りタスク (Message ID照合版)
 # ==========================================
 @tasks.loop(minutes=1.0)
 async def auto_log_loop():
@@ -96,19 +96,17 @@ async def auto_log_loop():
     try:
         worksheet = sheet.worksheet("AllLogs")
     except gspread.exceptions.WorksheetNotFound:
-        worksheet = sheet.add_worksheet(title="AllLogs", rows="100", cols="5")
-        worksheet.append_row(["ServerName", "ChannelName", "UserName", "Content", "Timestamp"])
+        worksheet = sheet.add_worksheet(title="AllLogs", rows="100", cols="6")
+        # 6列目に MessageID を追加
+        worksheet.append_row(["ServerName", "ChannelName", "UserName", "Content", "Timestamp", "MessageID"])
 
-    # 1. 現在スプレッドシートにある全データを取得して「すでに存在するログのセット」を作る
+    # 1. スプレッドシートの全データを取得し、6列目(MessageID)だけをセットにまとめる
     all_rows = worksheet.get_all_values()
-    existing_logs = set()
+    existing_ids = set()
     
-    # 2行目以降のデータを合体させて一意のキーにする
     for row in all_rows[1:]:
-        if len(row) >= 5:
-            # サーバー名_チャンネル名_ユーザー名_内容_時間
-            log_key = f"{row[0]}_{row[1]}_{row[2]}_{row[3]}_{row[4]}"
-            existing_logs.add(log_key)
+        if len(row) >= 6:
+            existing_ids.add(str(row[5]).strip()) # 6列目のMessageIDを記録
 
     for channel_id in list(registered_channels):
         channel = bot.get_channel(channel_id)
@@ -122,31 +120,27 @@ async def auto_log_loop():
                 if message.author.bot:
                     continue
                 
-                formatted_time = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                
-                # これから追加しようとしているメッセージのキーを作成
-                current_key = f"{channel.guild.name}_{channel.name}_{message.author.name}_{message.content}_{formatted_time}"
-                
-                # ❌ すでにスプレッドシートに存在する、または今回の一括処理内で重複している場合は【絶対に無視】する
-                if current_key in existing_logs:
+                # ❌ メッセージの固有IDがすでにスプレッドシートにあれば【絶対にスキップ】
+                if str(message.id) in existing_ids:
                     continue
                 
+                formatted_time = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
                 row = [
                     channel.guild.name,
                     channel.name,
                     message.author.name,
                     message.content,
-                    formatted_time
+                    formatted_time,
+                    str(message.id) # 6列目にDiscordのメッセージIDを記録
                 ]
                 new_rows.append(row)
-                existing_logs.add(current_key) # 今回追加する分もセットに記録しておく
+                existing_ids.add(str(message.id)) # ループ内重複対策
             
-            # 本当に新しいログだけをまとめて追加
+            # 新着ログがあれば一括追加
             if new_rows:
-                # 送信日時が古い順にスプレッドシートの下に追加されるように逆順にする
-                new_rows.reverse()
+                new_rows.reverse() # 古い順に下に追加されるように
                 worksheet.append_rows(new_rows)
-                print(f"  └ [#{channel.name}] 新着ログ {len(new_rows)} 件を安全に追加しました。")
+                print(f"  └ [#{channel.name}] 新着ログ {len(new_rows)} 件を追加しました。")
                 
         except Exception as e:
             print(f"チャンネル {channel_id} のログ取得中にエラー: {e}")
